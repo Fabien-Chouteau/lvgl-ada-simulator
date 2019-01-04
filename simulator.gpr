@@ -1,0 +1,23 @@
+project Simulator extends "ada-lvgl/ada_lvgl.gpr" is
+
+   for Languages use ("C", "Ada");
+
+   for Source_Dirs use ("src/**");
+
+   for Main use ("main.adb");
+   for Object_Dir use "obj";
+   for Exec_Dir use ".";
+   for Create_Missing_Dirs use "True";
+
+   package Compiler is
+      for Switches ("C") use ("-DLV_CONF_INCLUDE_SIMPLE", "-fPIC");
+      for Switches ("Ada") use ("-fPIC");
+   end Compiler;
+
+   package Linker is
+      for Switches ("C") use ("-lSDL2", "-lSDL", "-lm", "-fPIC");
+      for Switches ("Ada") use ("-lSDL", "-lm");
+   end Linker;
+
+end Simulator;
+
