@@ -1,4 +1,4 @@
-project Simulator extends "ada-lvgl/ada_lvgl.gpr" is
+project Simulator extends "ada-lvgl/ada_lvgl_32bit_color.gpr" is
 
    for Languages use ("C", "Ada");
 

@@ -7,18 +7,17 @@ with LV.HAL.Tick;
 with Test_Theme_1;
 with SDL_HAL_800_480;
 
-procedure Ada_Main is
+procedure Main is
 begin
    LV.Init;
 
    SDL_HAL_800_480.Initialize;
 
-   Test_Theme_1.Init (LV.Theme.Default_Init (Hue  => 220,
-                                             Font => LV.Font.No_Font));
+   Test_Theme_1.Init;
 
    loop
       LV.Tasks.Handler;
       delay 0.005;
       lV.HAL.Tick.Inc (5);
    end loop;
-end Ada_Main;
+end Main;
