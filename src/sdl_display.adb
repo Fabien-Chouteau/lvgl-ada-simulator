@@ -80,7 +80,7 @@ package body SDL_Display is
          raise Program_Error with "Cannot create SDL display";
       end if;
 
-      LV.HAL.Disp.init (LV_Disp_Drv'Access);
+      LV.HAL.Disp.Init_Drv (LV_Disp_Drv'Access);
 
       LV_Disp_Drv.disp_flush := disp_flush'Access;
       LV_Disp_Drv.disp_fill := disp_fill'Access;
@@ -90,7 +90,7 @@ package body SDL_Display is
       LV.HAL.Disp.set_active (LV_Disp);
 
 
-      LV.HAL.Indev.Init (LV_Indev_Drv'Access);
+      LV.HAL.Indev.Init_Drv (LV_Indev_Drv'Access);
       LV_Indev_Drv.read := Read'Access;
       LV_Indev_Drv.c_type := LV.HAL.Indev.TYPE_POINTER;
       LV_Indev := LV.HAL.Indev.register (LV_Indev_Drv'Access);
