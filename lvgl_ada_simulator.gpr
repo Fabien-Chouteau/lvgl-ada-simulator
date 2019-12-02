@@ -1,0 +1,22 @@
+with "gnat/sdlada.gpr";
+
+project LVGL_Ada_Simulator extends "lvgl_ada_32bit_color.gpr" is
+
+   for Languages use ("Ada");
+
+   for Source_Dirs use ("src/**");
+   for Object_Dir use "obj";
+   for Create_Missing_Dirs use "True";
+
+   package Compiler is
+      for Switches ("C") use ("-DLV_CONF_INCLUDE_SIMPLE", "-fPIC");
+      for Switches ("Ada") use ("-fPIC");
+   end Compiler;
+
+   package Linker is
+      for Switches ("C") use ("-lSDL2", "-lm", "-fPIC");
+      for Switches ("Ada") use ("-lSDL2", "-lm");
+   end Linker;
+
+end LVGL_Ada_Simulator;
+
