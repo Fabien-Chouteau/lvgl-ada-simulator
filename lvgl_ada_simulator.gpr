@@ -1,4 +1,4 @@
-with "gnat/sdlada.gpr";
+with "sdlada.gpr";
 
 project LVGL_Ada_Simulator extends "lvgl_ada_32bit_color.gpr" is
 
