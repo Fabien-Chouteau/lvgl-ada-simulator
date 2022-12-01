@@ -1,8 +1,6 @@
-# Object file
-*.o
-
-# Ada Library Information
-*.ali
-
-obj/
-main
+.clang-format
+/lib/
+/obj/
+/bin/
+/alire/
+/config/
