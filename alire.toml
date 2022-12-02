@@ -1,6 +1,6 @@
 name = "lvgl_ada_simulator"
 description = "Native simulator of an LVGL display"
-version = "0.2.0-dev"
+version = "1.0.0-dev"
 
 authors = ["Fabien Chouteau"]
 maintainers = ["Fabien Chouteau <fabien.chouteau@gmail.com>"]
@@ -8,4 +8,8 @@ maintainers-logins = ["Fabien-Chouteau"]
 
 [[depends-on]]
 asfml = "^2.5.3"
-lvgl_ada = "0.2.0"
+lvgl_ada = "^1"
+
+# Dev pins
+[[pins]]
+lvgl_ada = { url = "https://github.com/Fabien-Chouteau/lvgl-ada" }
