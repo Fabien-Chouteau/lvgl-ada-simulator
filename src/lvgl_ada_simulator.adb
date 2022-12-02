@@ -1,8 +1,13 @@
 with System;
 with Ada.Exceptions;
+with Ada.Strings.Unbounded;
+with Ada.Real_Time; use Ada.Real_Time;
+with Ada.Containers.Doubly_Linked_Lists;
+
 with GNAT.OS_Lib;
 with Ada.Text_IO; use Ada.Text_IO;
 with Sf.Window.VideoMode; use Sf.Window.VideoMode;
+with Sf.Window.Keyboard;
 with Sf.Graphics; use Sf.Graphics;
 with Sf.Graphics.Rect;
 with Sf.Graphics.Sprite; use Sf.Graphics.Sprite;
@@ -16,7 +21,6 @@ with Sf.Window.Event; use Sf.Window.Event;
 with Sf.Window.Mouse; use Sf.Window.Mouse;
 with Sf; use Sf;
 
-with Ada.Real_Time; use Ada.Real_Time;
 with Sf.System.Vector2; use Sf.System.Vector2;
 
 with Interfaces;   use Interfaces;
@@ -32,6 +36,7 @@ with Lv.Objx;
 with Lv.Objx.Img;
 with Lv.Indev;
 
+
 package body LVGL_Ada_Simulator is
 
    Screen_Width : constant := Lvgl_Ada_Config.Horizontal_Resolution;
@@ -44,19 +49,67 @@ package body LVGL_Ada_Simulator is
    Port : Sf.Graphics.Rect.sfFloatRect := (0.0, 0.0, 1.0, 1.0);
    Win_Width, Win_Height : sfUint32 := 1;
 
+   Title : Ada.Strings.Unbounded.Unbounded_String;
+   Refresh_Rate : Positive := 60;
+
    -- LVGL --
 
-   Mouse_Point : Lv.Area.Point_T := (0, 0);
-   Mouse_Click : Boolean := False;
+   package LVGL_Event_Queue is
+
+      package LVGL_Event_List
+      is new Ada.Containers.Doubly_Linked_Lists (Indev_Data_T);
+
+      protected type Queue is
+         procedure Push (Elt : Indev_Data_T);
+         procedure Pop (Elt : out Indev_Data_T; Success : out Boolean);
+      private
+         List : LVGL_Event_List.List;
+      end Queue;
+   end LVGL_Event_Queue;
+
+   package body LVGL_Event_Queue is
+
+      protected body Queue is
+         procedure Push (Elt : Indev_Data_T) is
+         begin
+            List.Append (Elt);
+         end Push;
+
+         procedure Pop (Elt : out Indev_Data_T; Success : out Boolean) is
+         begin
+            if List.Is_Empty then
+               Success := False;
+            else
+               Success := True;
+               Elt := List.First_Element;
+               List.Delete_First;
+            end if;
+         end Pop;
+      end Queue;
+   end LVGL_Event_Queue;
 
    LV_Disp_Drv : aliased Disp_Drv_T;
    LV_Disp : Disp_T;
 
-   LV_Indev_Drv : aliased Indev_Drv_T;
-   LV_Indev : Indev_T;
-   Cursor_Obj : Lv.Objx.Img.Instance;
+   Pointer_Enabled      : Boolean := False;
+   LV_Indev_Pointer_Drv : aliased Indev_Drv_T;
+   LV_Indev_Pointer     : Indev_T;
+   Cursor_Obj           : Lv.Objx.Img.Instance;
+   Pointer_Queue        : LVGL_Event_Queue.Queue;
+   In_Pointer_Pos       : Lv.Area.Point_T := (1, 1);
+   In_Pointer_State     : Lv.Hal.Indev.Indev_State_T := Lv.Hal.Indev.State_Rel;
+   Out_Pointer_Pos      : Lv.Area.Point_T := (1, 1);
+   Out_Pointer_State    : Lv.Hal.Indev.Indev_State_T := Lv.Hal.Indev.State_Rel;
 
-   function Read (Data : access Indev_Data_T) return U_Bool
+   Keypad_Enabled      : Boolean := False;
+   LV_Indev_Keypad_Drv : aliased Indev_Drv_T;
+   LV_Indev_Keypad     : Indev_T;
+   Keypad_Queue        : LVGL_Event_Queue.Queue;
+
+   function Read_Pointer (Data : access Indev_Data_T) return U_Bool
+     with Convention => C;
+
+   function Read_Keypad (Data : access Indev_Data_T) return U_Bool
      with Convention => C;
 
    procedure Disp_Flush
@@ -82,6 +135,46 @@ package body LVGL_Ada_Simulator is
       Y2    : Int32_T;
       Color : access constant Color_Array)
    with Convention => C;
+
+   ------------------
+   -- To_LVGL_Code --
+   ------------------
+
+   function To_LVGL_Code (Key : Sf.Window.Event.sfKeyEvent)
+                          return Lv.Uint32_T
+   is
+      use Sf.Window.Keyboard;
+   begin
+      case Key.code is
+         when sfKeyUp     => return Lv.LV_KEY_UP;
+         when sfKeyDown   => return Lv.LV_KEY_DOWN;
+         when sfKeyRight  => return Lv.LV_KEY_RIGHT;
+         when sfKeyLeft   => return Lv.LV_KEY_LEFT;
+         when sfKeyEscape => return Lv.LV_KEY_ESC;
+         when sfKeyDelete => return Lv.LV_KEY_DEL;
+         when sfKeyBack   => return Lv.LV_KEY_BACKSPACE;
+         when sfKeyEnter  => return Lv.LV_KEY_ENTER;
+         when sfKeyHome   => return LV.LV_KEY_HOME;
+         when sfKeyEnd    => return LV.LV_KEY_END;
+         when sfKeySpace  => return Character'Enum_Rep (' ');
+
+         when sfKeyNum0 .. sfKeyNum9 =>
+            return Character'Enum_Rep ('0') +
+              Lv.Uint32_T (Key.code - sfKeyNum0);
+
+         when sfKeyA .. sfKeyZ =>
+            if Key.shift then
+               return Character'Enum_Rep ('A') +
+                 Lv.Uint32_T (Key.code - sfKeyA);
+            else
+               return Character'Enum_Rep ('a') +
+                 Lv.Uint32_T (Key.code - sfKeyA);
+            end if;
+
+         when others =>
+            return 1;
+      end case;
+   end To_LVGL_Code;
 
    --------------
    -- Viewport --
@@ -152,7 +245,6 @@ package body LVGL_Ada_Simulator is
    task Periodic_Update is
       entry Start;
       entry Take_Screenshot (Path : String);
-      pragma Unreferenced (Take_Screenshot);
    end Periodic_Update;
 
    ---------------------
@@ -174,7 +266,7 @@ package body LVGL_Ada_Simulator is
       Letter_Box_View : Sf.Graphics.sfView_Ptr;
       Event   : sfEvent;
 
-      Period : constant Time_Span := Milliseconds (1000 / 60);
+      Period : constant Time_Span := Milliseconds (1000 / Refresh_Rate);
       Next_Release : Time := Clock + Period;
 
       Screen_Scale : constant := 1.0; -- 296.0 / Float (Screen_Width);
@@ -211,8 +303,11 @@ package body LVGL_Ada_Simulator is
       end if;
       setTexture (Sprite_Right, Framebuffer_Texture);
 
-      Window := create (Mode, "WNM-PS1 Simulator",
-                        sfResize or sfClose, Params);
+      Window := create (Mode,
+                        Ada.Strings.Unbounded.To_String (Title),
+                        sfResize or sfClose,
+                        Params);
+
       if Window = null then
          Put_Line ("Failed to create window");
          GNAT.OS_Lib.OS_Exit (1);
@@ -256,19 +351,55 @@ package body LVGL_Ada_Simulator is
                   Set_View (Letter_Box_View, Port);
 
                when sfEvtMouseMoved =>
-                  Mouse_Point := (Int16_T (Event.mouseMove.x),
-                                  Int16_T (Event.mouseMove.y));
+                  In_Pointer_Pos := (Int16_T (Event.mouseMove.x),
+                                     Int16_T (Event.mouseMove.y));
+
+                  if Pointer_Enabled then
+                     Pointer_Queue.Push
+                       ((Union => (Discr => 0,
+                                   Point => In_Pointer_Pos),
+                         User_Data => System.Null_Address,
+                         State => In_Pointer_State));
+                  end if;
 
                when sfEvtMouseButtonPressed =>
                   if Event.mouseButton.button = sfMouseLeft then
-                     Mouse_Click := True;
+                     In_Pointer_State := Lv.Hal.Indev.State_Pr;
+
+                     if Pointer_Enabled then
+                        Pointer_Queue.Push
+                          ((Union => (Discr => 0,
+                                      Point => In_Pointer_Pos),
+                            User_Data => System.Null_Address,
+                            State => In_Pointer_State));
+                     end if;
+
                   end if;
 
                when sfEvtMouseButtonReleased =>
                   if Event.mouseButton.button = sfMouseLeft then
-                     Mouse_Click := False;
+                     In_Pointer_State := Lv.Hal.Indev.State_Rel;
+
+                     if Pointer_Enabled then
+                        Pointer_Queue.Push
+                          ((Union => (Discr => 0,
+                                      Point => In_Pointer_Pos),
+                            User_Data => System.Null_Address,
+                            State => In_Pointer_State));
+                     end if;
                   end if;
 
+               when sfEvtKeyPressed | sfEvtKeyReleased =>
+                  if Keypad_Enabled then
+                     Keypad_Queue.Push
+                       ((Union => (Discr => 1,
+                                   Key => To_LVGL_Code (Event.key)),
+                         User_Data => System.Null_Address,
+                         State => (if Event.eventType = sfEvtKeyPressed
+                                   then Lv.Hal.Indev.State_Pr
+                                   else Lv.Hal.Indev.State_Rel)));
+
+                  end if;
                when others =>
                   null;
             end case;
@@ -301,8 +432,6 @@ package body LVGL_Ada_Simulator is
          setView (Window, Letter_Box_View);
          display (Window);
 
-         --  Print_MIDI_Out;
-
       end loop;
    exception
       when E : others =>
@@ -314,8 +443,13 @@ package body LVGL_Ada_Simulator is
    -- Start --
    -----------
 
-   procedure Start is
+   procedure Start (Title : String; Refresh_Rate : Positive) is
    begin
+      LVGL_Ada_Simulator.Title :=
+        Ada.Strings.Unbounded.To_Unbounded_String (Title);
+
+      LVGL_Ada_Simulator.Refresh_Rate := Refresh_Rate;
+
       Periodic_Update.Start;
 
       Lv.Hal.Disp.Init_Drv (LV_Disp_Drv'Access);
@@ -326,31 +460,65 @@ package body LVGL_Ada_Simulator is
 
       LV_Disp := Lv.Hal.Disp.Register (LV_Disp_Drv'Access);
       Lv.Hal.Disp.Set_Active (LV_Disp);
-
-      Lv.Hal.Indev.Init_Drv (LV_Indev_Drv'Access);
-      LV_Indev_Drv.Read := Read'Access;
-      LV_Indev_Drv.C_Type := Lv.Hal.Indev.Type_Pointer;
-      LV_Indev := Lv.Hal.Indev.Register (LV_Indev_Drv'Access);
    end Start;
 
    ----------------
    -- Add_Cursor --
    ----------------
 
-   procedure Add_Cursor is
+   procedure Add_Pointer (With_Cursor : Boolean := False) is
       Mouse_Cursor_Icon : Integer;
       pragma Import (C, Mouse_Cursor_Icon, "lvgl_ada_sim_mouse_cursor_icon");
    begin
-      Cursor_Obj := Lv.Objx.Img.Create (Lv.Objx.Scr_Act, Lv.Objx.No_Obj);
-      Lv.Objx.Img.Set_Src (Cursor_Obj, Mouse_Cursor_Icon'Address);
-      Lv.Indev.Set_Cursor (LV_Indev, Cursor_Obj);
-   end Add_Cursor;
 
-   ----------
-   -- Read --
-   ----------
+      Lv.Hal.Indev.Init_Drv (LV_Indev_Pointer_Drv'Access);
+      LV_Indev_Pointer_Drv.Read := Read_Pointer'Access;
+      LV_Indev_Pointer_Drv.C_Type := Lv.Hal.Indev.Type_Pointer;
+      LV_Indev_Pointer := Lv.Hal.Indev.Register (LV_Indev_Pointer_Drv'Access);
 
-   function Read (Data : access Indev_Data_T) return U_Bool is
+      if With_Cursor then
+         Cursor_Obj := Lv.Objx.Img.Create (Lv.Objx.Scr_Act, Lv.Objx.No_Obj);
+         Lv.Objx.Img.Set_Src (Cursor_Obj, Mouse_Cursor_Icon'Address);
+         Lv.Indev.Set_Cursor (LV_Indev_Pointer, Cursor_Obj);
+      end if;
+
+      Pointer_Enabled := True;
+   end Add_Pointer;
+
+   ------------------
+   -- Add_Keyboard --
+   ------------------
+
+   procedure Add_Keyboard is
+   begin
+      Lv.Hal.Indev.Init_Drv (LV_Indev_Keypad_Drv'Access);
+      LV_Indev_Keypad_Drv.Read := Read_Keypad'Access;
+      LV_Indev_Keypad_Drv.C_Type := Lv.Hal.Indev.Type_Keypad;
+      LV_Indev_Keypad := Lv.Hal.Indev.Register (LV_Indev_Keypad_Drv'Access);
+      Keypad_Enabled := True;
+   end Add_Keyboard;
+
+   --------------------
+   -- Keyboard_Indev --
+   --------------------
+
+   function Keyboard_Indev return Lv.Hal.Indev.Indev_T
+   is (LV_Indev_Keypad);
+
+   ---------------------
+   -- Take_Screenshot --
+   ---------------------
+
+   procedure Take_Screenshot (Path : String) is
+   begin
+      Periodic_Update.Take_Screenshot (Path);
+   end Take_Screenshot;
+
+   ------------------
+   -- Read_Pointer --
+   ------------------
+
+   function Read_Pointer (Data : access Indev_Data_T) return U_Bool is
       Left   : constant Int16_T := Int16_T (Port.left * Float (Win_Width));
       Top    : constant Int16_T := Int16_T (Port.top * Float (Win_Height));
       Width  : constant Int16_T := Int16_T (Port.width * Float (Win_Width));
@@ -362,8 +530,19 @@ package body LVGL_Ada_Simulator is
       LV_Screen_Ratio_X : constant Float :=
         Float (Screen_Width) / Float (Win_Width);
 
-      Scaled : Lv.Area.Point_T := Mouse_Point;
+      Evt_In : Indev_Data_T;
+      Scaled : Lv.Area.Point_T;
+      Success : Boolean;
    begin
+
+      Pointer_Queue.Pop (Evt_In, Success);
+      if Success then
+         Out_Pointer_Pos := Evt_In.Union.Point;
+         Out_Pointer_State := Evt_In.State;
+      end if;
+
+      Scaled     := Out_Pointer_Pos;
+      Data.State := Out_Pointer_State;
 
       if Scaled.X < Left then
          Scaled.X := 0;
@@ -381,16 +560,19 @@ package body LVGL_Ada_Simulator is
       Scaled.Y := Int16_T (Float (Scaled.Y) * LV_Screen_Ratio_Y/ Port.height);
 
       Data.Union.Point := Scaled;
-      if Mouse_Click then
-         Data.State := Lv.Hal.Indev.State_Pr;
-      else
-         Data.State := Lv.Hal.Indev.State_Rel;
-      end if;
+      return (if Success then 1 else 0);
+   end Read_Pointer;
 
-      --  Return false because the points are not buffered, so no more data to
-      --  be read.
-      return 0;
-   end Read;
+   -----------------
+   -- Read_Keypad --
+   -----------------
+
+   function Read_Keypad (Data : access Indev_Data_T) return U_Bool is
+      Success : Boolean;
+   begin
+      Keypad_Queue.Pop (Data.all, Success);
+      return (if Success then 1 else 0);
+   end Read_Keypad;
 
    ----------------
    -- Disp_Flush --
